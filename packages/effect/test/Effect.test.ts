@@ -493,6 +493,28 @@ describe("Effect", () => {
     it.effect("repeat/schedule - repeats according to the specified schedule", () =>
       Effect.gen(function*() {
         let n = 0
+        const increment = Effect.sync(() => ++n).pipe(Effect.tap(Effect.fnUntraced(function*() {
+          const metadata = yield* Schedule.RecurrenceMetadata
+
+          console.log(metadata)
+          return
+        })))
+        const result = yield* Effect.repeat(
+          increment,
+          Schedule.both(
+            Schedule.recurs(3),
+            Schedule.spaced(2000)
+          )
+        ).pipe(Effect.fork)
+        // Schedule
+        yield* TestClock.adjust(10000)
+        yield* Fiber.join(result)
+        assert.strictEqual(result, 3)
+      }))
+
+    it.effect("repeat/schedule - repeats according to the specified schedule", () =>
+      Effect.gen(function*() {
+        let n = 0
         const increment = Effect.sync(() => ++n)
         const result = yield* Effect.repeat(increment, Schedule.recurs(3))
         assert.strictEqual(result, 3)
@@ -619,10 +641,15 @@ describe("Effect", () => {
         assert.strictEqual(n, 1)
       }))
 
-    it.effect("retry/schedule - retries according to the specified schedule", () =>
+    it.effect("123", () =>
       Effect.gen(function*() {
         let n = 0
-        const increment = Effect.failSync(() => n++)
+        const increment = Effect.failSync(() => n++).pipe(Effect.tapError(Effect.fnUntraced(function*() {
+          const metadata = yield* Schedule.RecurrenceMetadata
+
+          console.log(metadata)
+          return
+        })))
         yield* increment.pipe(
           Effect.retry(Schedule.recurs(3)),
           Effect.flip

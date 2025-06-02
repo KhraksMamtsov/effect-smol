@@ -1,6 +1,7 @@
 /**
  * @since 2.0.0
  */
+import * as Context from "./Context.js"
 import * as Cron from "./Cron.js"
 import type * as DateTime from "./DateTime.js"
 import * as Duration from "./Duration.js"
@@ -79,6 +80,28 @@ export declare namespace Schedule {
     readonly output: Output
   }
 }
+
+const defaultRecurrenceMetadata: Schedule.Metadata<unknown, unknown> = {
+  input: undefined,
+  recurrence: 0,
+  start: 0,
+  now: 0,
+  elapsed: 0,
+  elapsedSincePrevious: 0,
+  output: undefined
+}
+
+/**
+ * @since 4.0.0
+ * @category models
+ */
+export const RecurrenceMetadata: Context.Reference<Schedule.Metadata<unknown, unknown>> = Context
+  .GenericReference(
+    "effect/Schedule/RecurrenceMetadata",
+    {
+      defaultValue: () => defaultRecurrenceMetadata
+    }
+  )
 
 const ScheduleProto = {
   [TypeId]: {
@@ -178,6 +201,37 @@ export const toStepWithSleep = <Output, Input, Error, Env>(
           ([output, duration]) =>
             Duration.isZero(duration) ? effect.succeed(output) : effect.as(effect.sleep(duration), output)
         )
+    )
+  )
+
+/**
+ * @since 4.0.0
+ * @category destructors
+ */
+export const toStepWithSleepAndMetadata = <Output, Input, Error, Env>(
+  schedule: Schedule<Output, Input, Error, Env>
+): Effect<
+  (input: Input) => Pull.Pull<Schedule.Metadata<Output, Input>, Error, Output, Env>,
+  never,
+  Env
+> =>
+  effect.clockWith((clock) =>
+    effect.map(
+      toStep(schedule),
+      (step) => {
+        const meta = metadataFn()
+        return (input) =>
+          effect.flatMap(
+            effect.suspend(() => {
+              const now = clock.unsafeCurrentTimeMillis()
+              return step(now, input).pipe(
+                effect.map(([output, duration]) => [{ ...meta(now, input), output }, duration] as const)
+              )
+            }),
+            ([metadata, duration]) =>
+              Duration.isZero(duration) ? effect.succeed(metadata) : effect.as(effect.sleep(duration), metadata)
+          )
+      }
     )
   )
 

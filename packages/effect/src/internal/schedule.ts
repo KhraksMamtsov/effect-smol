@@ -10,27 +10,36 @@ import * as effect from "./effect.js"
 export const repeatOrElse: {
   <R2, A, B, E, E2, E3, R3>(
     schedule: Schedule.Schedule<B, A, E2, R2>,
-    orElse: (error: E | E2, option: Option.Option<B>) => Effect<B, E3, R3>
+    orElse: (error: E | E2, option: Option.Option<Schedule.Schedule.Metadata<B, A>>) => Effect<B, E3, R3>
   ): <R>(
     self: Effect<A, E, R>
   ) => Effect<B, E3, R | R2 | R3>
   <A, E, R, R2, B, E2, E3, R3>(
     self: Effect<A, E, R>,
     schedule: Schedule.Schedule<B, A, E2, R2>,
-    orElse: (error: E | E2, option: Option.Option<B>) => Effect<B, E3, R3>
+    orElse: (error: E | E2, option: Option.Option<Schedule.Schedule.Metadata<B, A>>) => Effect<B, E3, R3>
   ): Effect<B, E3, R | R2 | R3>
 } = dual(3, <A, E, R, R2, B, E2, E3, R3>(
   self: Effect<A, E, R>,
   schedule: Schedule.Schedule<B, A, E2, R2>,
-  orElse: (error: E | E2, option: Option.Option<B>) => Effect<B, E3, R3>
+  orElse: (error: E | E2, option: Option.Option<Schedule.Schedule.Metadata<B, A>>) => Effect<B, E3, R3>
 ): Effect<B, E3, R | R2 | R3> =>
-  effect.flatMap(Schedule.toStepWithSleep(schedule), (step) => {
-    let lastOutput: Option.Option<B> = Option.none()
+  effect.flatMap(Schedule.toStepWithSleepAndMetadata(schedule), (step) => {
+    let lastOutput: Option.Option<Schedule.Schedule.Metadata<B, A>> = Option.none()
     return effect.catch_(
       effect.forever(
-        effect.tap(effect.flatMap(self, step), (output) => {
-          lastOutput = Option.some(output)
-        }),
+        effect.tap(
+          effect.suspend(() => {
+            let eff = effect.flatMap(self, step)
+            if (Option.isSome(lastOutput)) {
+              eff = effect.provideService(eff, Schedule.RecurrenceMetadata, lastOutput.value)
+            }
+            return eff
+          }),
+          (outputMetadata) => {
+            lastOutput = Option.some(outputMetadata)
+          }
+        ),
         { autoYield: false }
       ),
       (error) => Pull.isHalt(error) ? effect.succeed(error.leftover as B) : orElse(error as E | E2, lastOutput)
@@ -53,11 +62,14 @@ export const retryOrElse: {
   policy: Schedule.Schedule<A1, NoInfer<E>, E1, R1>,
   orElse: (e: NoInfer<E | E1>, out: A1) => Effect<A2, E2, R2>
 ): Effect<A | A2, E1 | E2, R | R1 | R2> =>
-  effect.flatMap(Schedule.toStepWithSleep(policy), (step) => {
+  effect.flatMap(Schedule.toStepWithSleepAndMetadata(policy), (step) => {
     let lastError: E | E1 | undefined
     const loop: Effect<A, E1 | Pull.Halt<A1>, R | R1> = effect.catch_(self, (error) => {
       lastError = error
-      return effect.flatMap(step(error), () => loop)
+      return effect.flatMap(
+        step(error),
+        (metadata) => effect.provideService(loop, Schedule.RecurrenceMetadata, metadata)
+      )
     })
     return Pull.catchHalt(loop, (out) => orElse(lastError!, out as A1))
   }))
@@ -128,7 +140,7 @@ export const scheduleFrom = dual<
   initial: Input,
   schedule: Schedule.Schedule<Output, Input, Error, Env>
 ): Effect<Output, E, R | Env> =>
-  effect.flatMap(Schedule.toStepWithSleep(schedule), (step) =>
+  effect.flatMap(Schedule.toStepWithSleepAndMetadata(schedule), (step) =>
     effect.catch_(
       effect.andThen(
         step(initial),

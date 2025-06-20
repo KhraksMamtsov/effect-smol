@@ -36,8 +36,8 @@ export const repeatOrElse: {
             }
             return eff
           }),
-          (outputMetadata) => {
-            lastOutput = Option.some(outputMetadata)
+          (metadata) => {
+            lastOutput = Option.some({ ...metadata, recurrence: metadata.recurrence + 1 })
           }
         ),
         { autoYield: false }
@@ -68,7 +68,8 @@ export const retryOrElse: {
       lastError = error
       return effect.flatMap(
         step(error),
-        (metadata) => effect.provideService(loop, Schedule.RecurrenceMetadata, metadata)
+        (metadata) =>
+          effect.provideService(loop, Schedule.RecurrenceMetadata, { ...metadata, recurrence: metadata.recurrence + 1 })
       )
     })
     return Pull.catchHalt(loop, (out) => orElse(lastError!, out as A1))
